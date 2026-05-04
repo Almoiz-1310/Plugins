@@ -1,0 +1,42 @@
+[
+    {
+        "id": 1,
+        "name": "Apple",
+        "logo": "https://upload.wikimedia.org/wikipedia/commons/f/fa/Apple_logo_black.svg"
+    },
+    {
+        "id": 2,
+        "name": "Samsung",
+        "logo": "https://upload.wikimedia.org/wikipedia/commons/2/24/Samsung_Logo.svg"
+    },
+    {
+        "id": 3,
+        "name": "Google",
+        "logo": "https://upload.wikimedia.org/wikipedia/commons/2/2f/Google_2015_logo.svg"
+    },
+    {
+        "id": 4,
+        "name": "OnePlus",
+        "logo": "https://upload.wikimedia.org/wikipedia/commons/2/2b/OnePlus_Logo.svg"
+    },
+    {
+        "id": 5,
+        "name": "Xiaomi",
+        "logo": "https://upload.wikimedia.org/wikipedia/commons/a/ae/Xiaomi_logo_%282021-%29.svg"
+    },
+    {
+        "id": 6,
+        "name": "Sony",
+        "logo": "https://upload.wikimedia.org/wikipedia/commons/c/c3/Sony_logo.svg"
+    },
+    {
+        "id": 7,
+        "name": "Oppo",
+        "logo": "https://upload.wikimedia.org/wikipedia/commons/b/b8/Oppo_Logo.svg"
+    },
+    {
+        "id": 8,
+        "name": "Vivo",
+        "logo": "https://upload.wikimedia.org/wikipedia/commons/e/e5/Vivo_Logo.svg"
+    }
+]

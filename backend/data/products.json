@@ -1,0 +1,98 @@
+[
+    {
+        "id": 1,
+        "name": "iPhone 15 Pro Max",
+        "brand": "Apple",
+        "price": 1199,
+        "rating": 4.9,
+        "image": "https://store.storeimages.cdn-apple.com/4982/as-images.apple.com/is/iphone-15-pro-max-natural-titanium-select-202309?wid=5120&hei=2880&fmt=p-jpg&qlt=80&.v=1693510915781",
+        "reviews": 128,
+        "description": "The ultimate iPhone with titanium design, A17 Pro chip, and the most powerful camera system in an iPhone.",
+        "specs": {
+            "screen": "6.7-inch Super Retina XDR",
+            "processor": "A17 Pro chip",
+            "camera": "48MP Main | Ultra Wide | Telephoto",
+            "battery": "Up to 29 hours video playback"
+        }
+    },
+    {
+        "id": 2,
+        "name": "Samsung Galaxy S24 Ultra",
+        "brand": "Samsung",
+        "price": 1299,
+        "rating": 4.8,
+        "image": "https://images.samsung.com/is/image/samsung/p6pim/uk/2401/gallery/uk-galaxy-s24-s928-sm-s928bztpeub-539659192?$650_519_PNG$",
+        "reviews": 95,
+        "description": "Galaxy AI is here. Welcome to the era of mobile AI. With the most powerful Galaxy processor and camera yet.",
+        "specs": {
+            "screen": "6.8-inch QHD+ Dynamic AMOLED 2X",
+            "processor": "Snapdragon 8 Gen 3 for Galaxy",
+            "camera": "200MP Wide | 50MP Telephoto",
+            "battery": "5000mAh"
+        }
+    },
+    {
+        "id": 3,
+        "name": "Google Pixel 8 Pro",
+        "brand": "Google",
+        "price": 999,
+        "rating": 4.7,
+        "image": "https://lh3.googleusercontent.com/f_52u_X1tF6d_q8i_k1_p1_p1_p1_p1_p1_p1_p1_p1_p1_p1_p1_p1_p1_p1_p1",
+        "reviews": 82,
+        "description": "The most advanced Pixel yet. With Google AI and the best Pixel Camera, it's powerful and personal.",
+        "specs": {
+            "screen": "6.7-inch Super Actua display",
+            "processor": "Google Tensor G3",
+            "camera": "50MP wide | 48MP ultrawide",
+            "battery": "24+ hour battery life"
+        }
+    },
+    {
+        "id": 4,
+        "name": "OnePlus 12",
+        "brand": "OnePlus",
+        "price": 799,
+        "rating": 4.6,
+        "image": "https://image01.oneplus.net/ebp/202401/23/1-m00-51-60-rrb8bw-u-0qam-8aaaj0q-5q-0q808.png",
+        "reviews": 64,
+        "description": "Smooth Beyond Belief. Powered by Snapdragon 8 Gen 3 and our largest VC cooling system ever.",
+        "specs": {
+            "screen": "2K 120Hz ProXDR Display",
+            "processor": "Snapdragon 8 Gen 3",
+            "camera": "4th Gen Hasselblad Camera",
+            "battery": "5400mAh"
+        }
+    },
+    {
+        "id": 5,
+        "name": "Xiaomi 14 Ultra",
+        "brand": "Xiaomi",
+        "price": 1099,
+        "rating": 4.7,
+        "image": "https://i01.appmifile.com/v1/MI_18455B3E4DA706226CF7535A58E875F0267/pms_1708572426.68532452.png",
+        "reviews": 45,
+        "description": "Legendary optics. Co-engineered with Leica. A professional photography kit in your pocket.",
+        "specs": {
+            "screen": "6.73-inch AMOLED",
+            "processor": "Snapdragon 8 Gen 3",
+            "camera": "Leica Quad Camera",
+            "battery": "5000mAh"
+        }
+    },
+    {
+        "id": 6,
+        "name": "Sony Xperia 1 V",
+        "brand": "Sony",
+        "price": 1399,
+        "rating": 4.5,
+        "image": "https://www.sony.co.uk/image/5d02da5c552806d588e023a7c109b4c0?fmt=pjpeg&wid=330&bgcolor=FFFFFF&bgc=FFFFFF",
+        "reviews": 32,
+        "description": "Next-gen sensor. Next-gen imaging. Created for creators.",
+        "specs": {
+            "screen": "6.5-inch 4K HDR OLED",
+            "processor": "Snapdragon 8 Gen 2",
+            "camera": "Exmor T for mobile sensor",
+            "battery": "5000mAh"
+        }
+    }
+]
