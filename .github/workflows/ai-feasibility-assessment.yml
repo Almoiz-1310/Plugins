@@ -27,7 +27,7 @@ permissions:
 env:
   # Provider options: gemini | openai
   AI_PROVIDER: gemini
-  GEMINI_MODEL: gemini-2.0-flash
+  GEMINI_MODEL: gemini-1.5-flash
   OPENAI_MODEL: gpt-4o-mini
   TOP_FILE_LIMIT: "25"
   MAX_FILE_CHARS: "12000"
@@ -213,6 +213,7 @@ jobs:
           python3 - <<'PY'
           import json
           import os
+          import urllib.error
           import urllib.parse
           import urllib.request
 
@@ -220,7 +221,16 @@ jobs:
           if not api_key:
               raise RuntimeError("GEMINI_API_KEY is not set")
 
-          model = os.environ.get("GEMINI_MODEL", "gemini-1.5-flash")
+          primary_model = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
+          model_candidates = []
+          for m in [
+              primary_model,
+              "gemini-2.0-flash",
+              "gemini-1.5-flash-latest",
+              "gemini-1.5-flash",
+          ]:
+              if m and m not in model_candidates:
+                  model_candidates.append(m)
           system_prompt = open("templates/system-prompt.md", "r", encoding="utf-8").read()
           schema = json.load(open("templates/assessment-schema.json", "r", encoding="utf-8"))
           assessment_input = json.load(open("out/assessment-input.json", "r", encoding="utf-8"))
@@ -233,10 +243,6 @@ jobs:
               f"{json.dumps(assessment_input, ensure_ascii=True)}"
           )
 
-          url = (
-              "https://generativelanguage.googleapis.com/v1beta/models/"
-              f"{model}:generateContent?key={urllib.parse.quote(api_key)}"
-          )
           payload = {
               "contents": [
                   {
@@ -251,15 +257,42 @@ jobs:
               }
           }
 
-          req = urllib.request.Request(
-              url,
-              data=json.dumps(payload).encode("utf-8"),
-              headers={"Content-Type": "application/json"},
-              method="POST",
-          )
+          response = None
+          last_error = None
+          selected_model = None
 
-          with urllib.request.urlopen(req) as resp:
-              response = json.loads(resp.read().decode("utf-8"))
+          for model in model_candidates:
+              print(f"Trying Gemini model: {model}")
+              url = (
+                  "https://generativelanguage.googleapis.com/v1beta/models/"
+                  f"{model}:generateContent?key={urllib.parse.quote(api_key)}"
+              )
+              req = urllib.request.Request(
+                  url,
+                  data=json.dumps(payload).encode("utf-8"),
+                  headers={"Content-Type": "application/json"},
+                  method="POST",
+              )
+              try:
+                  with urllib.request.urlopen(req) as resp:
+                      response = json.loads(resp.read().decode("utf-8"))
+                  selected_model = model
+                  break
+              except urllib.error.HTTPError as e:
+                  body = ""
+                  try:
+                      body = e.read().decode("utf-8", errors="ignore")
+                  except Exception:
+                      pass
+                  print(f"Model {model} failed with HTTP {e.code}: {body[:500]}")
+                  last_error = RuntimeError(f"Gemini model {model} failed with HTTP {e.code}")
+                  if e.code == 404:
+                      continue
+                  raise
+
+          if response is None:
+              raise last_error or RuntimeError("No Gemini response from any model candidate")
+          print(f"Using Gemini model: {selected_model}")
 
           candidates = response.get("candidates", [])
           if not candidates:
