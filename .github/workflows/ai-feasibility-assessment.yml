@@ -27,6 +27,7 @@ permissions:
 env:
   # Provider options: gemini | openai
   AI_PROVIDER: gemini
+  USE_SIMULATED_OUTPUT: "true"
   GEMINI_MODEL: gemini-1.5-flash
   OPENAI_MODEL: gpt-4o-mini
   TOP_FILE_LIMIT: "25"
@@ -94,6 +95,9 @@ jobs:
 
           top_limit = int(os.environ.get("TOP_FILE_LIMIT", "25"))
           max_chars = int(os.environ.get("MAX_FILE_CHARS", "12000"))
+          chunk_lines = 180
+          chunk_overlap = 40
+          chunks_per_file = 2
           repo_name = os.environ.get("GITHUB_REPOSITORY", "")
           default_branch = os.environ.get("GITHUB_REF_NAME", "main")
           issue_key = os.environ.get("JIRA_KEY", "")
@@ -123,7 +127,7 @@ jobs:
               text=True,
           ).stdout.splitlines()
 
-          candidates = []
+          file_candidates = []
           for rel in files_out:
               p = Path(rel)
               if any(part in excluded_parts for part in p.parts):
@@ -136,13 +140,12 @@ jobs:
                   continue
               if not content.strip():
                   continue
-              sample = content[:max_chars]
-              text_l = (rel + "\n" + sample).lower()
+              text_l = (rel + "\n" + content[:max_chars]).lower()
               score = sum(text_l.count(k) for k in keywords) if keywords else 0
               if score > 0:
-                  candidates.append((score, rel, sample))
+                  file_candidates.append((score, rel, content))
 
-          if not candidates:
+          if not file_candidates:
               for rel in files_out[:top_limit]:
                   p = Path(rel)
                   if any(part in excluded_parts for part in p.parts):
@@ -150,16 +153,16 @@ jobs:
                   if p.suffix.lower() in excluded_suffixes:
                       continue
                   try:
-                      sample = p.read_text(encoding="utf-8", errors="ignore")[:max_chars]
+                      content = p.read_text(encoding="utf-8", errors="ignore")
                   except Exception:
                       continue
-                  if sample.strip():
-                      candidates.append((0, rel, sample))
-                  if len(candidates) >= top_limit:
+                  if content.strip():
+                      file_candidates.append((0, rel, content))
+                  if len(file_candidates) >= top_limit:
                       break
 
-          candidates.sort(key=lambda x: x[0], reverse=True)
-          selected = candidates[:top_limit]
+          file_candidates.sort(key=lambda x: x[0], reverse=True)
+          selected_files = file_candidates[:top_limit]
 
           out_dir = Path("out")
           out_dir.mkdir(parents=True, exist_ok=True)
@@ -175,13 +178,42 @@ jobs:
               "Relevant snippets:"
           ]
           snippets = []
-          for score, rel, sample in selected:
-              snippets.append({
-                  "path": rel,
-                  "score": score,
-                  "snippet": sample
-              })
-              context_lines.append(f"\n--- FILE: {rel} (score={score}) ---\n{sample}")
+          for file_score, rel, content in selected_files:
+              lines = content.splitlines()
+              if not lines:
+                  continue
+
+              step = max(1, chunk_lines - chunk_overlap)
+              chunk_candidates = []
+              for start in range(0, len(lines), step):
+                  end = min(len(lines), start + chunk_lines)
+                  chunk_text = "\n".join(lines[start:end])
+                  if not chunk_text.strip():
+                      continue
+                  chunk_lower = (rel + "\n" + chunk_text).lower()
+                  chunk_score = sum(chunk_lower.count(k) for k in keywords) if keywords else 0
+                  total_score = file_score + chunk_score
+                  chunk_candidates.append((total_score, start + 1, end, chunk_text))
+                  if end >= len(lines):
+                      break
+
+              chunk_candidates.sort(key=lambda x: x[0], reverse=True)
+              best_chunks = chunk_candidates[:chunks_per_file] if chunk_candidates else []
+
+              for total_score, start_line, end_line, chunk_text in best_chunks:
+                  if len(chunk_text) > max_chars:
+                      chunk_text = chunk_text[:max_chars]
+                  snippets.append({
+                      "path": rel,
+                      "file_score": file_score,
+                      "chunk_score": total_score,
+                      "start_line": start_line,
+                      "end_line": end_line,
+                      "snippet": chunk_text
+                  })
+                  context_lines.append(
+                      f"\n--- FILE: {rel} (score={total_score}, lines={start_line}-{end_line}) ---\n{chunk_text}"
+                  )
 
           (out_dir / "context.txt").write_text("\n".join(context_lines), encoding="utf-8")
 
@@ -208,7 +240,7 @@ jobs:
           PY
 
       - name: Generate assessment using Gemini
-        if: ${{ env.AI_PROVIDER == 'gemini' }}
+        if: ${{ env.USE_SIMULATED_OUTPUT != 'true' && env.AI_PROVIDER == 'gemini' }}
         run: |
           python3 - <<'PY'
           import json
@@ -313,7 +345,7 @@ jobs:
           PY
 
       - name: Generate assessment using OpenAI
-        if: ${{ env.AI_PROVIDER == 'openai' }}
+        if: ${{ env.USE_SIMULATED_OUTPUT != 'true' && env.AI_PROVIDER == 'openai' }}
         run: |
           python3 - <<'PY'
           import json
@@ -378,6 +410,37 @@ jobs:
               json.dumps(parsed, ensure_ascii=True, indent=2)
           )
           PY
+
+      - name: Generate simulated assessment output
+        if: ${{ env.USE_SIMULATED_OUTPUT == 'true' }}
+        run: |
+          cat > out/assessment-output.json <<'EOF'
+          {
+            "verdict": "partially_feasible",
+            "affected_components": ["api", "content-pipeline", "admin-ui"],
+            "effort_estimate": {
+              "size": "L",
+              "rationale": "Requires integration updates, schema mapping, and rollout controls."
+            },
+            "risks": [
+              {
+                "severity": "high",
+                "type": "architecture",
+                "detail": "Cross-module coupling may require refactoring in multiple services."
+              },
+              {
+                "severity": "medium",
+                "type": "security",
+                "detail": "Context filtering must prevent accidental exposure of sensitive snippets."
+              }
+            ],
+            "open_questions": [
+              "Should low-confidence results auto-route to engineering triage?",
+              "Which Jira custom fields should be updated automatically in phase 1?"
+            ],
+            "confidence_score": 82
+          }
+          EOF
 
       - name: Validate assessment output contract
         run: |
