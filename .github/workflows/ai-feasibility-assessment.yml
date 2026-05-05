@@ -145,14 +145,19 @@ jobs:
           fi
 
       - name: Prepare Jira comment body
+        env:
+          WORKFLOW_REPOSITORY: ${{ github.repository }}
+          WORKFLOW_RUN_ID: ${{ github.run_id }}
         run: |
           python3 - <<'PY'
           import json
+          import os
           from pathlib import Path
           data = json.loads(Path("out/assessment-output.json").read_text())
           tmpl = Path("templates/jira-comment-template.md").read_text()
           risks = "\n".join([f"- [{r['severity']}] {r['type']}: {r['detail']}" for r in data["risks"]]) or "- None"
           questions = "\n".join([f"- {q}" for q in data["open_questions"]]) or "- None"
+          workflow_url = f"https://github.com/{os.environ['WORKFLOW_REPOSITORY']}/actions/runs/{os.environ['WORKFLOW_RUN_ID']}"
           body = (
               tmpl.replace("{{VERDICT}}", data["verdict"])
               .replace("{{AFFECTED_COMPONENTS}}", ", ".join(data["affected_components"]))
@@ -161,7 +166,7 @@ jobs:
               .replace("{{RISKS}}", risks)
               .replace("{{OPEN_QUESTIONS}}", questions)
               .replace("{{CONFIDENCE_SCORE}}", str(data["confidence_score"]))
-              .replace("{{WORKFLOW_URL}}", f"https://github.com/{Path('.').resolve().name}/actions/runs/${{{{ github.run_id }}}}")
+              .replace("{{WORKFLOW_URL}}", workflow_url)
           )
           Path("out/jira-comment.md").write_text(body)
           PY
