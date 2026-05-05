@@ -3,19 +3,177 @@ name: AI Feasibility Assessment
 on:
   repository_dispatch:
     types: [jira_feature_request]
+  workflow_dispatch:
+    inputs:
+      jira_issue_key:
+        description: Jira issue key (for manual testing)
+        required: true
+      jira_summary:
+        description: Jira issue summary
+        required: true
+      jira_description:
+        description: Jira issue description
+        required: true
+      jira_priority:
+        description: Jira priority
+        required: false
+        default: Medium
 
 permissions:
   contents: read
+  pull-requests: read
   actions: read
 
+env:
+  # Provider options: openai | anthropic
+  AI_PROVIDER: openai
+  TOP_FILE_LIMIT: "25"
+  MAX_FILE_CHARS: "12000"
+  CONFIDENCE_THRESHOLD: "75"
+  JIRA_BASE_URL: ${{ secrets.JIRA_BASE_URL }}
+  JIRA_USER_EMAIL: ${{ secrets.JIRA_USER_EMAIL }}
+  JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+  OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+  ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+
 jobs:
-  receive-jira:
+  assess:
     runs-on: ubuntu-latest
     steps:
-      - name: Print incoming payload
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve Jira payload
+        id: payload
         run: |
-          echo "Issue key: ${{ github.event.client_payload.jira_issue_key }}"
-          echo "Summary: ${{ github.event.client_payload.jira_summary }}"
-          echo "Description: ${{ github.event.client_payload.jira_description }}"
-          echo "Priority: ${{ github.event.client_payload.jira_priority }}"
-          echo "Labels: ${{ github.event.client_payload.jira_labels }}"
+          if [ "${{ github.event_name }}" = "repository_dispatch" ]; then
+            echo "jira_issue_key=${{ github.event.client_payload.jira_issue_key }}" >> "$GITHUB_OUTPUT"
+            echo "jira_summary<<EOF" >> "$GITHUB_OUTPUT"
+            echo "${{ github.event.client_payload.jira_summary }}" >> "$GITHUB_OUTPUT"
+            echo "EOF" >> "$GITHUB_OUTPUT"
+            echo "jira_description<<EOF" >> "$GITHUB_OUTPUT"
+            echo "${{ github.event.client_payload.jira_description }}" >> "$GITHUB_OUTPUT"
+            echo "EOF" >> "$GITHUB_OUTPUT"
+            echo "jira_priority=${{ github.event.client_payload.jira_priority }}" >> "$GITHUB_OUTPUT"
+            echo "jira_labels=${{ github.event.client_payload.jira_labels }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "jira_issue_key=${{ inputs.jira_issue_key }}" >> "$GITHUB_OUTPUT"
+            echo "jira_summary<<EOF" >> "$GITHUB_OUTPUT"
+            echo "${{ inputs.jira_summary }}" >> "$GITHUB_OUTPUT"
+            echo "EOF" >> "$GITHUB_OUTPUT"
+            echo "jira_description<<EOF" >> "$GITHUB_OUTPUT"
+            echo "${{ inputs.jira_description }}" >> "$GITHUB_OUTPUT"
+            echo "EOF" >> "$GITHUB_OUTPUT"
+            echo "jira_priority=${{ inputs.jira_priority }}" >> "$GITHUB_OUTPUT"
+            echo "jira_labels=" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Validate required payload
+        run: |
+          test -n "${{ steps.payload.outputs.jira_issue_key }}"
+          test -n "${{ steps.payload.outputs.jira_summary }}"
+          test -n "${{ steps.payload.outputs.jira_description }}"
+
+      - name: Build repository context (config-first placeholder)
+        run: |
+          mkdir -p out
+          {
+            echo "Repository: $GITHUB_REPOSITORY"
+            echo "Issue Key: ${{ steps.payload.outputs.jira_issue_key }}"
+            echo "Summary: ${{ steps.payload.outputs.jira_summary }}"
+            echo "Priority: ${{ steps.payload.outputs.jira_priority }}"
+            echo "Labels: ${{ steps.payload.outputs.jira_labels }}"
+            echo ""
+            echo "Context policy:"
+            echo "- Top files limited to ${TOP_FILE_LIMIT}"
+            echo "- Max chars per file ${MAX_FILE_CHARS}"
+            echo "- Excluded paths: node_modules/, vendor/, dist/, build/, .git/, secrets/"
+          } > out/context.txt
+
+      - name: Generate assessment request payload
+        run: |
+          cat > out/assessment-input.json <<'EOF'
+          {
+            "jira_issue": {
+              "key": "${{ steps.payload.outputs.jira_issue_key }}",
+              "summary": "${{ steps.payload.outputs.jira_summary }}",
+              "description": "${{ steps.payload.outputs.jira_description }}",
+              "priority": "${{ steps.payload.outputs.jira_priority }}",
+              "labels": "${{ steps.payload.outputs.jira_labels }}"
+            },
+            "repository": {
+              "name": "${{ github.repository }}",
+              "default_branch": "${{ github.event.repository.default_branch }}",
+              "context_file": "out/context.txt"
+            },
+            "output_schema_path": "templates/assessment-schema.json",
+            "prompt_path": "templates/system-prompt.md"
+          }
+          EOF
+
+      - name: Simulate structured AI output for validation
+        run: |
+          cat > out/assessment-output.json <<'EOF'
+          {
+            "verdict": "partially_feasible",
+            "affected_components": ["api", "content-pipeline", "admin-ui"],
+            "effort_estimate": {
+              "size": "L",
+              "rationale": "Requires new integration points, schema mapping, and operational controls."
+            },
+            "risks": [
+              {"severity": "high", "type": "architecture", "detail": "Repository context may miss cross-service coupling if search quality is weak."},
+              {"severity": "medium", "type": "security", "detail": "Prompt context may leak sensitive snippets unless path and content filters are enforced."}
+            ],
+            "open_questions": [
+              "Should low-confidence outputs auto-route to engineering manager or triage board?",
+              "Which Jira custom fields are mandatory before triggering AI?"
+            ],
+            "confidence_score": 82
+          }
+          EOF
+
+      - name: Enforce confidence threshold
+        id: quality
+        run: |
+          score=$(python3 -c 'import json;print(json.load(open("out/assessment-output.json"))["confidence_score"])')
+          echo "confidence_score=$score" >> "$GITHUB_OUTPUT"
+          if [ "$score" -lt "${CONFIDENCE_THRESHOLD}" ]; then
+            echo "needs_human_review=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "needs_human_review=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Prepare Jira comment body
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          data = json.loads(Path("out/assessment-output.json").read_text())
+          tmpl = Path("templates/jira-comment-template.md").read_text()
+          risks = "\n".join([f"- [{r['severity']}] {r['type']}: {r['detail']}" for r in data["risks"]]) or "- None"
+          questions = "\n".join([f"- {q}" for q in data["open_questions"]]) or "- None"
+          body = (
+              tmpl.replace("{{VERDICT}}", data["verdict"])
+              .replace("{{AFFECTED_COMPONENTS}}", ", ".join(data["affected_components"]))
+              .replace("{{EFFORT_SIZE}}", data["effort_estimate"]["size"])
+              .replace("{{EFFORT_RATIONALE}}", data["effort_estimate"]["rationale"])
+              .replace("{{RISKS}}", risks)
+              .replace("{{OPEN_QUESTIONS}}", questions)
+              .replace("{{CONFIDENCE_SCORE}}", str(data["confidence_score"]))
+              .replace("{{WORKFLOW_URL}}", f"https://github.com/{Path('.').resolve().name}/actions/runs/${{{{ github.run_id }}}}")
+          )
+          Path("out/jira-comment.md").write_text(body)
+          PY
+
+      - name: Write summary and artifacts
+        run: |
+          echo "Assessment complete for ${{ steps.payload.outputs.jira_issue_key }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "Confidence score: ${{ steps.quality.outputs.confidence_score }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "Needs human review: ${{ steps.quality.outputs.needs_human_review }}" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-feasibility-artifacts
+          path: out/
