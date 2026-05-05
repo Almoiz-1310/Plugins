@@ -171,6 +171,52 @@ jobs:
           Path("out/jira-comment.md").write_text(body)
           PY
 
+      - name: Post comment to Jira
+        run: |
+          python3 - <<'PY'
+          import base64
+          import json
+          import os
+          import urllib.request
+
+          issue_key = "${{ steps.payload.outputs.jira_issue_key }}"
+          base_url = os.environ["JIRA_BASE_URL"].rstrip("/")
+          email = os.environ["JIRA_USER_EMAIL"]
+          token = os.environ["JIRA_API_TOKEN"]
+
+          comment_text = open("out/jira-comment.md", "r", encoding="utf-8").read()
+
+          body = json.dumps({
+              "body": {
+                  "type": "doc",
+                  "version": 1,
+                  "content": [
+                      {
+                          "type": "paragraph",
+                          "content": [
+                              {"type": "text", "text": comment_text}
+                          ]
+                      }
+                  ]
+              }
+          }).encode("utf-8")
+
+          auth = base64.b64encode(f"{email}:{token}".encode("utf-8")).decode("utf-8")
+          req = urllib.request.Request(
+              f"{base_url}/rest/api/3/issue/{issue_key}/comment",
+              data=body,
+              method="POST",
+              headers={
+                  "Authorization": f"Basic {auth}",
+                  "Accept": "application/json",
+                  "Content-Type": "application/json"
+              }
+          )
+
+          with urllib.request.urlopen(req) as resp:
+              print(f"Jira comment posted with status {resp.status}")
+          PY
+
       - name: Write summary and artifacts
         run: |
           echo "Assessment complete for ${{ steps.payload.outputs.jira_issue_key }}" >> "$GITHUB_STEP_SUMMARY"
