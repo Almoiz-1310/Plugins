@@ -1,0 +1,21 @@
+name: AI Feasibility Assessment
+
+on:
+  repository_dispatch:
+    types: [jira_feature_request]
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  receive-jira:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Print incoming payload
+        run: |
+          echo "Issue key: ${{ github.event.client_payload.jira_issue_key }}"
+          echo "Summary: ${{ github.event.client_payload.jira_summary }}"
+          echo "Description: ${{ github.event.client_payload.jira_description }}"
+          echo "Priority: ${{ github.event.client_payload.jira_priority }}"
+          echo "Labels: ${{ github.event.client_payload.jira_labels }}"
