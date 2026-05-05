@@ -27,6 +27,7 @@ permissions:
 env:
   # Provider options: openai | anthropic
   AI_PROVIDER: openai
+  OPENAI_MODEL: gemini-1.5-flash
   TOP_FILE_LIMIT: "25"
   MAX_FILE_CHARS: "12000"
   CONFIDENCE_THRESHOLD: "75"
@@ -74,64 +75,217 @@ jobs:
           test -n "${{ steps.payload.outputs.jira_summary }}"
           test -n "${{ steps.payload.outputs.jira_description }}"
 
-      - name: Build repository context (config-first placeholder)
+      - name: Build repository context with relevant snippets
+        env:
+          JIRA_KEY: ${{ steps.payload.outputs.jira_issue_key }}
+          JIRA_SUMMARY: ${{ steps.payload.outputs.jira_summary }}
+          JIRA_DESCRIPTION: ${{ steps.payload.outputs.jira_description }}
+          JIRA_PRIORITY: ${{ steps.payload.outputs.jira_priority }}
+          JIRA_LABELS: ${{ steps.payload.outputs.jira_labels }}
         run: |
-          mkdir -p out
-          {
-            echo "Repository: $GITHUB_REPOSITORY"
-            echo "Issue Key: ${{ steps.payload.outputs.jira_issue_key }}"
-            echo "Summary: ${{ steps.payload.outputs.jira_summary }}"
-            echo "Priority: ${{ steps.payload.outputs.jira_priority }}"
-            echo "Labels: ${{ steps.payload.outputs.jira_labels }}"
-            echo ""
-            echo "Context policy:"
-            echo "- Top files limited to ${TOP_FILE_LIMIT}"
-            echo "- Max chars per file ${MAX_FILE_CHARS}"
-            echo "- Excluded paths: node_modules/, vendor/, dist/, build/, .git/, secrets/"
-          } > out/context.txt
+          python3 - <<'PY'
+          import json
+          import os
+          import re
+          import subprocess
+          from pathlib import Path
 
-      - name: Generate assessment request payload
-        run: |
-          cat > out/assessment-input.json <<'EOF'
-          {
-            "jira_issue": {
-              "key": "${{ steps.payload.outputs.jira_issue_key }}",
-              "summary": "${{ steps.payload.outputs.jira_summary }}",
-              "description": "${{ steps.payload.outputs.jira_description }}",
-              "priority": "${{ steps.payload.outputs.jira_priority }}",
-              "labels": "${{ steps.payload.outputs.jira_labels }}"
-            },
-            "repository": {
-              "name": "${{ github.repository }}",
-              "default_branch": "${{ github.event.repository.default_branch }}",
-              "context_file": "out/context.txt"
-            },
-            "output_schema_path": "templates/assessment-schema.json",
-            "prompt_path": "templates/system-prompt.md"
-          }
-          EOF
+          top_limit = int(os.environ.get("TOP_FILE_LIMIT", "25"))
+          max_chars = int(os.environ.get("MAX_FILE_CHARS", "12000"))
+          repo_name = os.environ.get("GITHUB_REPOSITORY", "")
+          default_branch = os.environ.get("GITHUB_REF_NAME", "main")
+          issue_key = os.environ.get("JIRA_KEY", "")
+          summary = os.environ.get("JIRA_SUMMARY", "")
+          description = os.environ.get("JIRA_DESCRIPTION", "")
+          priority = os.environ.get("JIRA_PRIORITY", "")
+          labels = os.environ.get("JIRA_LABELS", "")
 
-      - name: Simulate structured AI output for validation
-        run: |
-          cat > out/assessment-output.json <<'EOF'
-          {
-            "verdict": "partially_feasible",
-            "affected_components": ["api", "content-pipeline", "admin-ui"],
-            "effort_estimate": {
-              "size": "L",
-              "rationale": "Requires new integration points, schema mapping, and operational controls."
-            },
-            "risks": [
-              {"severity": "high", "type": "architecture", "detail": "Repository context may miss cross-service coupling if search quality is weak."},
-              {"severity": "medium", "type": "security", "detail": "Prompt context may leak sensitive snippets unless path and content filters are enforced."}
-            ],
-            "open_questions": [
-              "Should low-confidence outputs auto-route to engineering manager or triage board?",
-              "Which Jira custom fields are mandatory before triggering AI?"
-            ],
-            "confidence_score": 82
+          excluded_parts = {
+              ".git", "node_modules", "vendor", "dist", "build",
+              "__pycache__", ".next", ".cache", "coverage", "secrets"
           }
-          EOF
+          excluded_suffixes = {
+              ".png", ".jpg", ".jpeg", ".gif", ".webp", ".pdf", ".zip",
+              ".gz", ".jar", ".exe", ".dll", ".so", ".lock", ".min.js"
+          }
+
+          query_text = f"{summary} {description} {labels}".lower()
+          keywords = set(re.findall(r"[a-zA-Z_][a-zA-Z0-9_]{3,}", query_text))
+          stop = {"with", "from", "that", "this", "have", "will", "should", "into", "about", "feature", "request"}
+          keywords = [k for k in keywords if k not in stop]
+
+          files_out = subprocess.run(
+              ["git", "ls-files"],
+              check=True,
+              capture_output=True,
+              text=True,
+          ).stdout.splitlines()
+
+          candidates = []
+          for rel in files_out:
+              p = Path(rel)
+              if any(part in excluded_parts for part in p.parts):
+                  continue
+              if p.suffix.lower() in excluded_suffixes:
+                  continue
+              try:
+                  content = p.read_text(encoding="utf-8", errors="ignore")
+              except Exception:
+                  continue
+              if not content.strip():
+                  continue
+              sample = content[:max_chars]
+              text_l = (rel + "\n" + sample).lower()
+              score = sum(text_l.count(k) for k in keywords) if keywords else 0
+              if score > 0:
+                  candidates.append((score, rel, sample))
+
+          if not candidates:
+              for rel in files_out[:top_limit]:
+                  p = Path(rel)
+                  if any(part in excluded_parts for part in p.parts):
+                      continue
+                  if p.suffix.lower() in excluded_suffixes:
+                      continue
+                  try:
+                      sample = p.read_text(encoding="utf-8", errors="ignore")[:max_chars]
+                  except Exception:
+                      continue
+                  if sample.strip():
+                      candidates.append((0, rel, sample))
+                  if len(candidates) >= top_limit:
+                      break
+
+          candidates.sort(key=lambda x: x[0], reverse=True)
+          selected = candidates[:top_limit]
+
+          out_dir = Path("out")
+          out_dir.mkdir(parents=True, exist_ok=True)
+
+          context_lines = [
+              f"Repository: {repo_name}",
+              f"Default Branch: {default_branch}",
+              f"Issue Key: {issue_key}",
+              f"Summary: {summary}",
+              f"Priority: {priority}",
+              f"Labels: {labels}",
+              "",
+              "Relevant snippets:"
+          ]
+          snippets = []
+          for score, rel, sample in selected:
+              snippets.append({
+                  "path": rel,
+                  "score": score,
+                  "snippet": sample
+              })
+              context_lines.append(f"\n--- FILE: {rel} (score={score}) ---\n{sample}")
+
+          (out_dir / "context.txt").write_text("\n".join(context_lines), encoding="utf-8")
+
+          assessment_input = {
+              "jira_issue": {
+                  "key": issue_key,
+                  "summary": summary,
+                  "description": description,
+                  "priority": priority,
+                  "labels": labels
+              },
+              "repository": {
+                  "name": repo_name,
+                  "default_branch": default_branch
+              },
+              "selected_snippets": snippets,
+              "output_schema_path": "templates/assessment-schema.json",
+              "prompt_path": "templates/system-prompt.md"
+          }
+          (out_dir / "assessment-input.json").write_text(
+              json.dumps(assessment_input, ensure_ascii=True, indent=2),
+              encoding="utf-8"
+          )
+          PY
+
+      - name: Generate assessment using OpenAI
+        if: ${{ env.AI_PROVIDER == 'openai' }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import urllib.request
+
+          api_key = os.environ.get("OPENAI_API_KEY", "").strip()
+          if not api_key:
+              raise RuntimeError("OPENAI_API_KEY is not set")
+
+          model = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
+          system_prompt = open("templates/system-prompt.md", "r", encoding="utf-8").read()
+          schema = json.load(open("templates/assessment-schema.json", "r", encoding="utf-8"))
+          assessment_input = json.load(open("out/assessment-input.json", "r", encoding="utf-8"))
+
+          user_prompt = (
+              "Assess feasibility for this Jira request using repository snippets. "
+              "Return JSON only.\n\n"
+              + json.dumps(assessment_input, ensure_ascii=True)
+          )
+
+          url = "https://api.openai.com/v1/chat/completions"
+          base_payload = {
+              "model": model,
+              "temperature": 0.1,
+              "messages": [
+                  {"role": "system", "content": system_prompt},
+                  {"role": "user", "content": user_prompt}
+              ]
+          }
+
+          def do_request(payload):
+              req = urllib.request.Request(
+                  url,
+                  data=json.dumps(payload).encode("utf-8"),
+                  headers={
+                      "Authorization": f"Bearer {api_key}",
+                      "Content-Type": "application/json"
+                  },
+                  method="POST",
+              )
+              with urllib.request.urlopen(req) as resp:
+                  return json.loads(resp.read().decode("utf-8"))
+
+          try:
+              strict_payload = dict(base_payload)
+              strict_payload["response_format"] = {
+                  "type": "json_schema",
+                  "json_schema": {
+                      "name": "feasibility_assessment",
+                      "schema": schema,
+                      "strict": True
+                  }
+              }
+              response = do_request(strict_payload)
+          except Exception:
+              response = do_request(base_payload)
+
+          raw = response["choices"][0]["message"]["content"]
+          parsed = json.loads(raw)
+          open("out/assessment-output.json", "w", encoding="utf-8").write(
+              json.dumps(parsed, ensure_ascii=True, indent=2)
+          )
+          PY
+
+      - name: Validate assessment output contract
+        run: |
+          python3 - <<'PY'
+          import json
+          data = json.load(open("out/assessment-output.json", "r", encoding="utf-8"))
+          required = {"verdict", "affected_components", "effort_estimate", "risks", "open_questions", "confidence_score"}
+          missing = required - data.keys()
+          if missing:
+              raise RuntimeError(f"Missing required keys in assessment output: {sorted(missing)}")
+          if not isinstance(data["confidence_score"], int):
+              raise RuntimeError("confidence_score must be an integer")
+          if data["confidence_score"] < 0 or data["confidence_score"] > 100:
+              raise RuntimeError("confidence_score must be between 0 and 100")
+          PY
 
       - name: Enforce confidence threshold
         id: quality
