@@ -25,15 +25,17 @@ permissions:
   actions: read
 
 env:
-  # Provider options: openai | anthropic
-  AI_PROVIDER: openai
-  OPENAI_MODEL: gemini-1.5-flash
+  # Provider options: gemini | openai
+  AI_PROVIDER: gemini
+  GEMINI_MODEL: gemini-1.5-flash
+  OPENAI_MODEL: gpt-4o-mini
   TOP_FILE_LIMIT: "25"
   MAX_FILE_CHARS: "12000"
   CONFIDENCE_THRESHOLD: "75"
   JIRA_BASE_URL: ${{ secrets.JIRA_BASE_URL }}
   JIRA_USER_EMAIL: ${{ secrets.JIRA_USER_EMAIL }}
   JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+  GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
   OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
   ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
 
@@ -202,6 +204,78 @@ jobs:
           (out_dir / "assessment-input.json").write_text(
               json.dumps(assessment_input, ensure_ascii=True, indent=2),
               encoding="utf-8"
+          )
+          PY
+
+      - name: Generate assessment using Gemini
+        if: ${{ env.AI_PROVIDER == 'gemini' }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import urllib.parse
+          import urllib.request
+
+          api_key = os.environ.get("GEMINI_API_KEY", "").strip()
+          if not api_key:
+              raise RuntimeError("GEMINI_API_KEY is not set")
+
+          model = os.environ.get("GEMINI_MODEL", "gemini-1.5-flash")
+          system_prompt = open("templates/system-prompt.md", "r", encoding="utf-8").read()
+          schema = json.load(open("templates/assessment-schema.json", "r", encoding="utf-8"))
+          assessment_input = json.load(open("out/assessment-input.json", "r", encoding="utf-8"))
+
+          prompt = (
+              f"{system_prompt}\n\n"
+              "Return JSON only and ensure it conforms exactly to this JSON schema:\n"
+              f"{json.dumps(schema, ensure_ascii=True)}\n\n"
+              "Assessment input:\n"
+              f"{json.dumps(assessment_input, ensure_ascii=True)}"
+          )
+
+          url = (
+              "https://generativelanguage.googleapis.com/v1beta/models/"
+              f"{model}:generateContent?key={urllib.parse.quote(api_key)}"
+          )
+          payload = {
+              "contents": [
+                  {
+                      "parts": [
+                          {"text": prompt}
+                      ]
+                  }
+              ],
+              "generationConfig": {
+                  "temperature": 0.1,
+                  "responseMimeType": "application/json"
+              }
+          }
+
+          req = urllib.request.Request(
+              url,
+              data=json.dumps(payload).encode("utf-8"),
+              headers={"Content-Type": "application/json"},
+              method="POST",
+          )
+
+          with urllib.request.urlopen(req) as resp:
+              response = json.loads(resp.read().decode("utf-8"))
+
+          candidates = response.get("candidates", [])
+          if not candidates:
+              raise RuntimeError(f"Gemini returned no candidates: {response}")
+
+          parts = candidates[0].get("content", {}).get("parts", [])
+          if not parts:
+              raise RuntimeError(f"Gemini returned no content parts: {response}")
+
+          raw = parts[0].get("text", "").strip()
+          if not raw:
+              raise RuntimeError(f"Gemini returned empty content: {response}")
+
+          parsed = json.loads(raw)
+          open("out/assessment-output.json", "w", encoding="utf-8").write(
+              json.dumps(parsed, ensure_ascii=True, indent=2)
           )
           PY
 
